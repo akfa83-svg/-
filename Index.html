@@ -1,0 +1,1471 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>تطبيق صيدلية شمس الفرات</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');
+        body {
+            font-family: 'Tajawal', sans-serif;
+        }
+        .animate-fade-in-down {
+            animation: fadeInDown 0.5s ease-in-out;
+        }
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // هذا هو الكود البرمجي الذي أرسلته لي، تم وضعه داخل وسم <script>
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from 'firebase/auth';
+        import { getFirestore, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
+        import React, { useState, useEffect, useCallback } from 'react';
+
+        // Critical Fix: Ensure initialAuthToken is correctly assigned from __initial_auth_token
+        // Note: This part is for cloud functions and is not needed for a static site, but we will keep it for code integrity.
+        const appId = 'default-app-id';
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_AUTH_DOMAIN",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+        const initialAuthToken = null; 
+
+        // Initialize Firebase outside the component to avoid unnecessary re-initialization
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Component to display alert messages
+        const MessageOverlay = ({ message, type, onClose }) => {
+          if (!message) return null;
+
+          const bgColor = type === 'success' ? 'bg-green-500' : 'bg-red-500';
+
+          return (
+            <div className="fixed top-4 left-1/2 -translate-x-1/2 p-4 rounded-lg shadow-lg z-50 animate-fade-in-down" style={{ transition: 'all 0.3s ease-in-out' }}>
+              <div className={`text-white px-6 py-3 rounded-lg flex items-center justify-between ${bgColor}`}>
+                <span>{message}</span>
+                <button onClick={onClose} className="ml-4 text-white hover:text-gray-200">
+                  ×
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Loading Indicator Component
+        // ====================================================================
+        const LoadingSpinner = () => {
+          return (
+            <div className="flex justify-center items-center py-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-700"></div>
+              <p className="ml-3 text-gray-700">جارٍ التحميل...</p>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Login Screen
+        // ====================================================================
+        const LoginScreen = ({ onLogin, displayMessage }) => {
+          const [username, setUsername] = useState('');
+          const [password, setPassword] = useState('');
+          const [loading, setLoading] = useState(false); // Loading state for login
+
+          // Handle login
+          const handleLogin = async () => {
+            setLoading(true); // Start loading
+            // Default manager credentials
+            if (username === 'Ali fahad' && password === '1995') {
+              onLogin('manager', { id: 'manager_id', name: 'Ali fahad', username: 'Ali fahad' });
+              displayMessage('تم تسجيل الدخول كمدير بنجاح!', 'success');
+              setLoading(false); // End loading
+              return;
+            }
+
+            try {
+              // Input validation
+              if (!username || !password) {
+                displayMessage('يرجى إدخال اسم المستخدم وكلمة المرور.', 'error');
+                setLoading(false);
+                return;
+              }
+
+              // Search for the employee in the database
+              const employeesRef = collection(db, `artifacts/${appId}/public/data/employees`);
+              const q = query(employeesRef, where('username', '==', username), where('password', '==', password));
+              const querySnapshot = await getDocs(q);
+
+              if (!querySnapshot.empty) {
+                const employeeData = querySnapshot.docs[0].data();
+                onLogin('employee', { id: querySnapshot.docs[0].id, ...employeeData });
+                displayMessage('تم تسجيل الدخول كموظف بنجاح!', 'success');
+              } else {
+                displayMessage('اسم المستخدم أو كلمة المرور غير صحيحة.', 'error');
+              }
+            } catch (error) {
+              console.error('Login error:', error);
+              displayMessage('حدث خطأ أثناء تسجيل الدخول. يرجى المحاولة مرة أخرى.', 'error');
+            } finally {
+              setLoading(false); // Always end loading
+            }
+          };
+
+          return (
+            <div className="min-h-screen bg-blue-600 flex items-center justify-center p-4">
+              <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
+                <h2 className="text-2xl font-bold text-center text-blue-800 mb-6 flex items-center justify-center">
+                  صيدلية شمس الفرات تتمنى لك يومًا سعيدًا
+                  <span className="ml-2 text-yellow-500 text-3xl">😊</span>
+                </h2>
+                <div className="mb-4">
+                  <label htmlFor="username" className="block text-gray-700 text-sm font-bold mb-2">اسم المستخدم:</label>
+                  <input
+                    type="text"
+                    id="username"
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="أدخل اسم المستخدم"
+                  />
+                </div>
+                <div className="mb-6">
+                  <label htmlFor="password" className="block text-gray-700 text-sm font-bold mb-2">كلمة المرور:</label>
+                  <input
+                    type="password"
+                    id="password"
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="أدخل كلمة المرور"
+                  />
+                </div>
+                <button
+                  onClick={handleLogin}
+                  className="bg-blue-700 hover:bg-blue-800 text-white font-bold py-2 px-4 rounded-full w-full focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105"
+                  disabled={loading}
+                >
+                  {loading ? 'جارٍ تسجيل الدخول...' : 'تسجيل الدخول'}
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Manager Menu Screen
+        // ====================================================================
+        const ManagerMenuScreen = ({ onLogout, setCurrentScreen, displayMessage, loggedInUser }) => {
+          return (
+            <div className="min-h-screen bg-gray-100 p-8 flex flex-col items-center">
+              <h2 className="text-4xl font-extrabold text-blue-800 mb-8 text-center">لوحة تحكم المدير</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-4xl">
+                <button
+                  onClick={() => setCurrentScreen('employeeManagement')}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 px-6 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105 text-xl flex items-center justify-center"
+                >
+                  <svg className="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H2v-2a3 3 0 015.356-1.857M17 20v-2c0-.653-.16-1.267-.442-1.815M14 10a6 6 0 11-12 0 6 6 0 0112 0zm-6 0a3 3 0 10-6 0 3 3 0 006 0zm-6 0a3 3 0 10-6 0 3 3 0 006 0zm-6 0a3 3 0 10-6 0 3 3 0 006 0z"></path></svg>
+                  إدارة الموظفين
+                </button>
+                <button
+                  onClick={() => setCurrentScreen('amountsManagement')}
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-6 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105 text-xl flex items-center justify-center"
+                >
+                  <svg className="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V6m0 6v2m0 6v2"></path></svg>
+                  إدارة المبالغ
+                </button>
+                <button
+                  onClick={() => setCurrentScreen('salariesManagement')}
+                  className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-4 px-6 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105 text-xl flex items-center justify-center"
+                >
+                  <svg className="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 14S6.284 5.614 5.242 2.322M9 14L8.125 10M13 18v-4h-2V6a2 2 0 012-2h4a2 2 0 012 2v4h-2v4"></path></svg>
+                  رواتب الموظفين
+                </button>
+                <button
+                  onClick={() => setCurrentScreen('notificationsManagement')}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-6 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105 text-xl flex items-center justify-center"
+                >
+                  <svg className="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0a3 3 0 11-6 0m6 0H9"></path></svg>
+                  إدارة الإشعارات
+                </button>
+              </div>
+              <button
+                onClick={onLogout}
+                className="mt-8 bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 text-lg"
+              >
+                تسجيل الخروج
+              </button>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Employee Screen
+        // ====================================================================
+        const EmployeeScreen = ({ onLogout, displayMessage, loggedInUser }) => {
+          const [hours, setHours] = useState('');
+          const [amount, setAmount] = useState('');
+          const [shiftType, setShiftType] = useState('صباحي');
+          const [isHoliday, setIsHoliday] = useState(false);
+          const [loading, setLoading] = useState(false); // Loading state for employee data submission
+
+          // Save work data
+          const handleSubmitWorkData = async () => {
+            setLoading(true); // Start loading
+            try {
+              if (isHoliday) {
+                // Record holiday
+                const workHoursRef = collection(db, `artifacts/${appId}/public/data/work_hours`);
+                await addDoc(workHoursRef, {
+                  employee_id: loggedInUser.data.id,
+                  date: new Date().toISOString().split('T')[0], // YYYY-MM-DD
+                  hours: 0,
+                  hourly_rate: loggedInUser.data.hourly_rate || 0, // Ensure hourly_rate is stored even if 0
+                  is_holiday: 1,
+                });
+                displayMessage('تم تسجيل الإجازة بنجاح!', 'success');
+              } else {
+                // Input validation for hours/amount
+                if (!hours && !amount) {
+                    displayMessage('الرجاء إدخال ساعات العمل أو مبلغ الشفت!', 'error');
+                    setLoading(false);
+                    return;
+                }
+                if (hours && parseFloat(hours) <= 0) {
+                    displayMessage('عدد الساعات يجب أن يكون أكبر من صفر.', 'error');
+                    setLoading(false);
+                    return;
+                }
+                if (amount && parseFloat(amount) < 0) {
+                    displayMessage('المبلغ لا يمكن أن يكون سالبًا.', 'error');
+                    setLoading(false);
+                    return;
+                }
+
+                if (hours) {
+                  const workHoursRef = collection(db, `artifacts/${appId}/public/data/work_hours`);
+                  await addDoc(workHoursRef, {
+                    employee_id: loggedInUser.data.id,
+                    date: new Date().toISOString().split('T')[0],
+                    hours: parseFloat(hours),
+                    hourly_rate: loggedInUser.data.hourly_rate || 0,
+                    is_holiday: 0,
+                  });
+                  displayMessage('تم تسجيل الساعات بنجاح!', 'success');
+                }
+                if (amount) {
+                  const amountsRef = collection(db, `artifacts/${appId}/public/data/amounts`);
+                  await addDoc(amountsRef, {
+                    employee_id: loggedInUser.data.id,
+                    date: new Date().toISOString().split('T')[0],
+                    shift_type: shiftType,
+                    amount: parseFloat(amount),
+                  });
+                  displayMessage('تم تسجيل المبلغ بنجاح!', 'success');
+                }
+              }
+              // Clear fields after successful submission
+              setHours('');
+              setAmount('');
+              setIsHoliday(false);
+            } catch (error) {
+              console.error('Error saving work data:', error);
+              displayMessage('حدث خطأ أثناء حفظ البيانات. يرجى المحاولة مرة أخرى.', 'error');
+            } finally {
+              setLoading(false); // Always end loading
+            }
+          };
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-blue-400 to-indigo-600 p-8 flex flex-col items-center justify-center">
+              <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-md backdrop-filter backdrop-blur-md bg-opacity-90">
+                <h2 className="text-3xl font-bold text-center text-gray-800 mb-6">شاشة الموظف</h2>
+                <p className="text-center text-gray-600 mb-6">أهلاً بك، {loggedInUser.data.name}!</p>
+
+                <div className="mb-4">
+                  <label htmlFor="hours" className="block text-gray-700 text-sm font-bold mb-2">عدد ساعات العمل:</label>
+                  <input
+                    type="number"
+                    id="hours"
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    value={hours}
+                    onChange={(e) => setHours(e.target.value)}
+                    disabled={isHoliday || loading}
+                    placeholder="أدخل عدد الساعات"
+                  />
+                </div>
+
+                <div className="mb-4">
+                  <label htmlFor="amount" className="block text-gray-700 text-sm font-bold mb-2">مبلغ الشفت:</label>
+                  <input
+                    type="number"
+                    id="amount"
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    disabled={isHoliday || loading}
+                    placeholder="أدخل مبلغ الشفت"
+                  />
+                </div>
+
+                <div className="mb-4">
+                  <label htmlFor="shiftType" className="block text-gray-700 text-sm font-bold mb-2">نوع الشفت:</label>
+                  <select
+                    id="shiftType"
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    value={shiftType}
+                    onChange={(e) => setShiftType(e.target.value)}
+                    disabled={isHoliday || loading}
+                  >
+                    <option value="صباحي">صباحي</option>
+                    <option value="مسائي">مسائي</option>
+                  </select>
+                </div>
+
+                <div className="mb-6 flex items-center">
+                  <input
+                    type="checkbox"
+                    id="isHoliday"
+                    className="form-checkbox h-5 w-5 text-blue-600 rounded"
+                    checked={isHoliday}
+                    onChange={(e) => setIsHoliday(e.target.checked)}
+                    disabled={loading}
+                  />
+                  <label htmlFor="isHoliday" className="ml-2 text-gray-700 text-sm font-bold">إجازة</label>
+                </div>
+
+                <button
+                  onClick={handleSubmitWorkData}
+                  className="bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 px-6 rounded-full w-full mb-4 shadow-lg transition duration-300 ease-in-out transform hover:scale-105"
+                  disabled={loading}
+                >
+                  {loading ? 'جارٍ الحفظ...' : 'حفظ البيانات'}
+                </button>
+
+                <button
+                  onClick={onLogout}
+                  className="bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-4 rounded-full w-full shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                  disabled={loading}
+                >
+                  تسجيل الخروج
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Employee Management Screen
+        // ====================================================================
+        const EmployeeManagementScreen = ({ setCurrentScreen, displayMessage }) => {
+          const [employees, setEmployees] = useState([]);
+          const [newEmployee, setNewEmployee] = useState({ name: '', username: '', password: '', hourly_rate: '' });
+          const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
+          const [editEmployeeData, setEditEmployeeData] = useState(null);
+          const [loading, setLoading] = useState(false);
+          const [isAuthReady, setIsAuthReady] = useState(false);
+
+          useEffect(() => {
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
+              setIsAuthReady(true);
+            });
+            return () => unsubscribe();
+          }, []);
+
+          useEffect(() => {
+            if (!isAuthReady) {
+                setEmployees([]);
+                setLoading(true);
+                return;
+            }
+
+            setLoading(true);
+            const employeesRef = collection(db, `artifacts/${appId}/public/data/employees`);
+            const unsubscribe = onSnapshot(employeesRef, (snapshot) => {
+              const employeesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setEmployees(employeesList);
+              setLoading(false);
+            }, (error) => {
+              console.error('Error fetching employees:', error);
+              displayMessage('خطأ في جلب بيانات الموظفين.', 'error');
+              setLoading(false);
+            });
+
+            return () => unsubscribe();
+          }, [displayMessage, isAuthReady]);
+
+
+          // Add new employee
+          const handleAddEmployee = async () => {
+            if (!newEmployee.name || !newEmployee.username || !newEmployee.password || newEmployee.hourly_rate === '') {
+              displayMessage('يرجى ملء جميع حقول الموظف الجديد.', 'error');
+              return;
+            }
+            const parsedHourlyRate = parseFloat(newEmployee.hourly_rate);
+            if (isNaN(parsedHourlyRate) || parsedHourlyRate <= 0) {
+              displayMessage('سعر الساعة يجب أن يكون رقمًا صالحًا وأكبر من صفر.', 'error');
+              return;
+            }
+
+            setLoading(true);
+            try {
+              const employeesRef = collection(db, `artifacts/${appId}/public/data/employees`);
+              await addDoc(employeesRef, {
+                name: newEmployee.name,
+                username: newEmployee.username,
+                password: newEmployee.password,
+                hourly_rate: parsedHourlyRate,
+              });
+              setNewEmployee({ name: '', username: '', password: '', hourly_rate: '' });
+              displayMessage('تم إضافة الموظف بنجاح!', 'success');
+            } catch (error) {
+              console.error('Error adding employee:', error);
+              displayMessage('حدث خطأ أثناء إضافة الموظف. يرجى المحاولة مرة أخرى.', 'error');
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          // Delete employee
+          const handleDeleteEmployee = async () => {
+            if (!selectedEmployeeId) {
+              displayMessage('الرجاء اختيار موظف لحذفه.', 'error');
+              return;
+            }
+            setLoading(true);
+            try {
+              await deleteDoc(doc(db, `artifacts/${appId}/public/data/employees`, selectedEmployeeId));
+              setSelectedEmployeeId('');
+              setEditEmployeeData(null);
+              displayMessage('تم حذف الموظف بنجاح!', 'success');
+            } catch (error) {
+              console.error('Error deleting employee:', error);
+              displayMessage('حدث خطأ أثناء حذف الموظف. يرجى المحاولة مرة أخرى.', 'error');
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          // Prepare to edit employee
+          const handleEditSelect = (e) => {
+            const id = e.target.value;
+            const employeeToEdit = employees.find(emp => emp.id === id);
+            setEditEmployeeData(employeeToEdit ? { ...employeeToEdit, hourly_rate: String(employeeToEdit.hourly_rate || '') } : null);
+            setSelectedEmployeeId(id);
+          };
+
+          // Update employee data
+          const handleUpdateEmployee = async () => {
+            if (!editEmployeeData || !editEmployeeData.id) {
+              displayMessage('الرجاء اختيار موظف للتعديل.', 'error');
+              return;
+            }
+            if (!editEmployeeData.name || !editEmployeeData.username || !editEmployeeData.password || editEmployeeData.hourly_rate === '') {
+                displayMessage('يرجى ملء جميع حقول التعديل.', 'error');
+                return;
+            }
+            const parsedHourlyRate = parseFloat(editEmployeeData.hourly_rate);
+            if (isNaN(parsedHourlyRate) || parsedHourlyRate <= 0) {
+              displayMessage('سعر الساعة يجب أن يكون رقمًا صالحًا وأكبر من صفر.', 'error');
+              return;
+            }
+
+            setLoading(true);
+            try {
+              const employeeRef = doc(db, `artifacts/${appId}/public/data/employees`, editEmployeeData.id);
+              await updateDoc(employeeRef, {
+                name: editEmployeeData.name,
+                username: editEmployeeData.username,
+                password: editEmployeeData.password,
+                hourly_rate: parsedHourlyRate,
+              });
+              setEditEmployeeData(null);
+              setSelectedEmployeeId('');
+              displayMessage('تم تعديل بيانات الموظف بنجاح!', 'success');
+            } catch (error) {
+              console.error('Error updating employee:', error);
+              displayMessage('حدث خطأ أثناء تعديل الموظف. يرجى المحاولة مرة أخرى.', 'error');
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-purple-400 to-indigo-500 p-8">
+              <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-2xl mx-auto backdrop-filter backdrop-blur-md bg-opacity-90">
+                <h2 className="text-3xl font-bold text-center text-purple-800 mb-6">إدارة الموظفين</h2>
+
+                {loading && <LoadingSpinner />}
+
+                {/* Add New Employee */}
+                <div className="mb-8 p-6 border border-purple-300 rounded-lg bg-purple-50">
+                  <h3 className="text-xl font-semibold text-purple-700 mb-4">إضافة موظف جديد</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <input
+                      type="text"
+                      className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                      placeholder="اسم الموظف"
+                      value={newEmployee.name}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, name: e.target.value })}
+                      disabled={loading}
+                    />
+                    <input
+                      type="text"
+                      className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                      placeholder="اسم المستخدم"
+                      value={newEmployee.username}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, username: e.target.value })}
+                      disabled={loading}
+                    />
+                    <input
+                      type="password"
+                      className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                      placeholder="كلمة المرور"
+                      value={newEmployee.password}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, password: e.target.value })}
+                      disabled={loading}
+                    />
+                    <input
+                      type="number"
+                      className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                      placeholder="سعر ساعة العمل"
+                      value={newEmployee.hourly_rate}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, hourly_rate: e.target.value })}
+                      disabled={loading}
+                    />
+                  </div>
+                  <button
+                    onClick={handleAddEmployee}
+                    className="mt-6 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-full w-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105"
+                    disabled={loading}
+                  >
+                    {loading ? 'جارٍ الإضافة...' : 'إضافة موظف'}
+                  </button>
+                </div>
+
+                {/* Edit Existing Employee */}
+                <div className="mb-8 p-6 border border-blue-300 rounded-lg bg-blue-50">
+                  <h3 className="text-xl font-semibold text-blue-700 mb-4">تعديل موظف</h3>
+                  <select
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline mb-4"
+                    value={selectedEmployeeId}
+                    onChange={handleEditSelect}
+                    disabled={loading || employees.length === 0}
+                  >
+                    <option value="">اختر موظفًا للتعديل</option>
+                    {employees.map((employee) => (
+                      <option key={employee.id} value={employee.id}>
+                        {employee.name}
+                      </option>
+                    ))}
+                  </select>
+                  {editEmployeeData && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                      <input
+                        type="text"
+                        className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                        placeholder="اسم الموظف"
+                        value={editEmployeeData.name}
+                        onChange={(e) => setEditEmployeeData({ ...editEmployeeData, name: e.target.value })}
+                        disabled={loading}
+                      />
+                      <input
+                        type="text"
+                        className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                        placeholder="اسم المستخدم"
+                        value={editEmployeeData.username}
+                        onChange={(e) => setEditEmployeeData({ ...editEmployeeData, username: e.target.value })}
+                        disabled={loading}
+                      />
+                      <input
+                        type="password"
+                        className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                        placeholder="كلمة المرور"
+                        value={editEmployeeData.password}
+                        onChange={(e) => setEditEmployeeData({ ...editEmployeeData, password: e.target.value })}
+                        disabled={loading}
+                      />
+                      <input
+                        type="number"
+                        className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                        placeholder="سعر ساعة العمل"
+                        value={editEmployeeData.hourly_rate}
+                        onChange={(e) => setEditEmployeeData({ ...editEmployeeData, hourly_rate: e.target.value })}
+                        disabled={loading}
+                      />
+                      <button
+                        onClick={handleUpdateEmployee}
+                        className="col-span-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full w-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 mt-4"
+                        disabled={loading}
+                      >
+                        {loading ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+
+                {/* Delete Existing Employee */}
+                <div className="p-6 border border-red-300 rounded-lg bg-red-50">
+                  <h3 className="text-xl font-semibold text-red-700 mb-4">حذف موظف</h3>
+                  <select
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline mb-4"
+                    value={selectedEmployeeId}
+                    onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                    disabled={loading || employees.length === 0}
+                  >
+                    <option value="">اختر موظفًا للحذف</option>
+                    {employees.map((employee) => (
+                      <option key={employee.id} value={employee.id}>
+                        {employee.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleDeleteEmployee}
+                    className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full w-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105"
+                    disabled={loading || !selectedEmployeeId}
+                  >
+                    {loading ? 'جارٍ الحذف...' : 'حذف الموظف'}
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setCurrentScreen('managerMenu')}
+                  className="mt-8 bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 mx-auto block"
+                  disabled={loading}
+                >
+                  العودة للقائمة الرئيسية
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Amounts Management Screen
+        // ====================================================================
+        const AmountsManagementScreen = ({ setCurrentScreen, displayMessage }) => {
+          const [amounts, setAmounts] = useState([]);
+          const [startDate, setStartDate] = useState(() => {
+            const today = new Date();
+            return new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+          });
+          const [endDate, setEndDate] = useState(() => {
+            const today = new Date();
+            return new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+          });
+          const [loadingAmounts, setLoadingAmounts] = useState(false);
+          const [employees, setEmployees] = useState([]);
+          const [loadingEmployees, setLoadingEmployees] = useState(true);
+          const [isAuthReady, setIsAuthReady] = useState(false);
+
+          useEffect(() => {
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
+              setIsAuthReady(true);
+            });
+            return () => unsubscribe();
+          }, []);
+
+          useEffect(() => {
+            if (!isAuthReady) {
+                setEmployees([]);
+                setLoadingEmployees(true);
+                return;
+            }
+            setLoadingEmployees(true);
+            const employeesRef = collection(db, `artifacts/${appId}/public/data/employees`);
+            const unsubscribe = onSnapshot(employeesRef, (snapshot) => {
+              const employeesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setEmployees(employeesList);
+              setLoadingEmployees(false);
+            }, (error) => {
+              console.error('Error fetching employees for amounts:', error);
+              displayMessage('خطأ في جلب بيانات الموظفين للمبالغ.', 'error');
+              setLoadingEmployees(false);
+            });
+            return () => unsubscribe();
+          }, [isAuthReady, displayMessage]);
+
+          useEffect(() => {
+            if (!isAuthReady || loadingEmployees || employees.length === 0) {
+                setAmounts([]);
+                if (loadingEmployees) {
+                    setLoadingAmounts(true);
+                } else {
+                    setLoadingAmounts(false);
+                }
+                return;
+            }
+
+            const fetchAmounts = async () => {
+              setLoadingAmounts(true);
+              try {
+                const amountsRef = collection(db, `artifacts/${appId}/public/data/amounts`);
+                const querySnapshot = await getDocs(query(amountsRef));
+                let allAmounts = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                const filteredAmounts = allAmounts.filter(item => {
+                  const itemDate = new Date(item.date);
+                  const start = new Date(startDate);
+                  const end = new Date(endDate);
+                  end.setHours(23, 59, 59, 999);
+
+                  return itemDate >= start && itemDate <= end;
+                });
+                
+                const employeesMap = new Map(employees.map(emp => [emp.id, emp.name]));
+                const amountsWithEmployeeNames = filteredAmounts.map(item => ({
+                  ...item,
+                  employeeName: employeesMap.get(item.employee_id) || 'غير معروف'
+                }));
+
+                setAmounts(amountsWithEmployeeNames);
+              } catch (error) {
+                console.error('Error fetching amounts:', error);
+                displayMessage('خطأ في جلب بيانات المبالغ.', 'error');
+                setAmounts([]);
+              } finally {
+                setLoadingAmounts(false);
+              }
+            };
+            fetchAmounts();
+          }, [startDate, endDate, displayMessage, isAuthReady, employees, loadingEmployees]);
+
+          const totalMorningShift = amounts
+            .filter(item => item.shift_type === 'صباحي')
+            .reduce((sum, item) => sum + (item.amount || 0), 0);
+
+          const totalEveningShift = amounts
+            .filter(item => item.shift_type === 'مسائي')
+            .reduce((sum, item) => sum + (item.amount || 0), 0);
+
+          const totalOverall = totalMorningShift + totalEveningShift;
+          const profitPercentage = 0.20;
+          const totalProfit = totalOverall * profitPercentage;
+
+          const handleShowDetailedReport = () => {
+            const today = new Date();
+            const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+            const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+            setStartDate(firstDayOfMonth);
+            setEndDate(lastDayOfMonth);
+            displayMessage('تم تحديث التقرير ليعرض بيانات الشهر الحالي.', 'success');
+          };
+
+          const overallLoading = loadingEmployees || loadingAmounts;
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-green-400 to-teal-600 p-8">
+              <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-3xl mx-auto backdrop-filter backdrop-blur-md bg-opacity-90">
+                <h2 className="text-3xl font-bold text-center text-green-800 mb-6">إدارة المبالغ</h2>
+
+                {overallLoading && <LoadingSpinner />}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 text-lg font-medium text-gray-800">
+                  <div className="p-4 bg-blue-50 rounded-lg shadow-md">
+                    مجموع مبلغ الشفت الصباحي: <span className="font-bold text-blue-700">{totalMorningShift.toFixed(2)}</span>
+                  </div>
+                  <div className="p-4 bg-indigo-50 rounded-lg shadow-md">
+                    مجموع مبلغ الشفت المسائي: <span className="font-bold text-indigo-700">{totalEveningShift.toFixed(2)}</span>
+                  </div>
+                  <div className="p-4 bg-purple-50 rounded-lg shadow-md">
+                    المجموع الكلي للشفتين: <span className="font-bold text-purple-700">{totalOverall.toFixed(2)}</span>
+                  </div>
+                  <div className="p-4 bg-pink-50 rounded-lg shadow-md">
+                    نسبة الأرباح (20%): <span className="font-bold text-pink-700">{totalProfit.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                <div className="mb-8 p-6 border border-green-300 rounded-lg bg-green-50">
+                  <h3 className="text-xl font-semibold text-green-700 mb-4">خيارات التقرير</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label htmlFor="startDate" className="block text-gray-700 text-sm font-bold mb-2">من تاريخ:</label>
+                      <input
+                        type="date"
+                        id="startDate"
+                        className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        disabled={overallLoading}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="endDate" className="block text-gray-700 text-sm font-bold mb-2">إلى تاريخ:</label>
+                      <input
+                        type="date"
+                        id="endDate"
+                        className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        disabled={overallLoading}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleShowDetailedReport}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-full w-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105"
+                    disabled={overallLoading}
+                  >
+                    عرض تقرير الشهر الحالي
+                  </button>
+                </div>
+
+                <div className="mb-8 p-6 border border-gray-300 rounded-lg bg-gray-50 max-h-80 overflow-y-auto">
+                  <h3 className="text-xl font-semibold text-gray-700 mb-4">تفاصيل المبالغ اليومية</h3>
+                  {overallLoading ? ( 
+                    <LoadingSpinner />
+                  ) : amounts.length === 0 ? (
+                    <p className="text-gray-600 text-center">لا توجد مبالغ للفترة المحددة.</p>
+                  ) : (
+                    <table className="min-w-full bg-white rounded-lg overflow-hidden shadow-md">
+                      <thead className="bg-gray-200">
+                        <tr>
+                          <th className="py-2 px-4 text-right text-gray-600">التاريخ</th>
+                          <th className="py-2 px-4 text-right text-gray-600">الموظف</th>
+                          <th className="py-2 px-4 text-right text-gray-600">نوع الشفت</th>
+                          <th className="py-2 px-4 text-right text-gray-600">المبلغ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {amounts
+                        .sort((a, b) => new Date(b.date) - new Date(a.date))
+                        .map((item) => (
+                          <tr key={item.id} className="border-b border-gray-100 last:border-b-0">
+                            <td className="py-2 px-4 text-gray-800">{item.date}</td>
+                            <td className="py-2 px-4 text-gray-800">{item.employeeName}</td>
+                            <td className="py-2 px-4 text-gray-800">{item.shift_type}</td>
+                            <td className="py-2 px-4 text-gray-800">{item.amount !== undefined ? item.amount.toFixed(2) : 'N/A'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setCurrentScreen('managerMenu')}
+                  className="mt-8 bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 mx-auto block"
+                  disabled={overallLoading}
+                >
+                  العودة للقائمة الرئيسية
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Salaries Management Screen
+        // ====================================================================
+        const SalariesManagementScreen = ({ setCurrentScreen, displayMessage }) => {
+          const [employees, setEmployees] = useState([]);
+          const [selectedEmployeeId, setSelectedEmployeeId] = useState('all');
+          const [startDate, setStartDate] = useState(() => {
+            const today = new Date();
+            return new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+          });
+          const [endDate, setEndDate] = useState(() => {
+            const today = new Date();
+            return new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+          });
+          const [salaries, setSalaries] = useState([]);
+          const [detailedWorkHours, setDetailedWorkHours] = useState({});
+          const [loadingEmployees, setLoadingEmployees] = useState(true);
+          const [loadingSalaries, setLoadingSalaries] = useState(false);
+          const [isAuthReady, setIsAuthReady] = useState(false);
+
+          useEffect(() => {
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
+              setIsAuthReady(true);
+            });
+            return () => unsubscribe();
+          }, []);
+
+
+          useEffect(() => {
+            if (!isAuthReady) {
+                setEmployees([]);
+                setLoadingEmployees(true);
+                return;
+            }
+
+            setLoadingEmployees(true);
+            const employeesRef = collection(db, `artifacts/${appId}/public/data/employees`);
+            const unsubscribe = onSnapshot(employeesRef, (snapshot) => {
+              const employeesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setEmployees(employeesList);
+              setLoadingEmployees(false);
+            }, (error) => {
+              console.error('Error fetching employees for salaries:', error);
+              displayMessage('خطأ في جلب بيانات الموظفين للرواتب.', 'error');
+              setLoadingEmployees(false);
+            });
+            return () => unsubscribe();
+          }, [displayMessage, isAuthReady]);
+
+          const calculateSalaries = useCallback(async () => {
+            if (!isAuthReady || loadingEmployees) {
+                setSalaries([]);
+                setDetailedWorkHours({});
+                setLoadingSalaries(true);
+                return;
+            }
+
+            if (employees.length === 0) {
+                setSalaries([]);
+                setDetailedWorkHours({});
+                setLoadingSalaries(false);
+                return;
+            }
+
+            setLoadingSalaries(true);
+            try {
+                let employeesToCalculate = employees;
+                if (selectedEmployeeId && selectedEmployeeId !== 'all') {
+                    const foundEmployee = employees.find(emp => emp.id === selectedEmployeeId);
+                    if (!foundEmployee) {
+                        displayMessage('الموظف المحدد غير موجود.', 'error');
+                        setSalaries([]);
+                        setDetailedWorkHours({});
+                        setLoadingSalaries(false);
+                        return;
+                    }
+                    employeesToCalculate = [foundEmployee];
+                }
+
+                const actualStartDate = startDate;
+                const actualEndDate = endDate;
+
+                const calculatedSalaries = [];
+                const newDetailedWorkHours = {};
+                const workHoursRef = collection(db, `artifacts/${appId}/public/data/work_hours`);
+
+                for (const emp of employeesToCalculate) {
+                    const q = query(workHoursRef, where('employee_id', '==', emp.id));
+                    const querySnapshot = await getDocs(q);
+                    const employeeWorkHours = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                    const filteredWorkHours = employeeWorkHours.filter(wh => {
+                        const whDate = new Date(wh.date);
+                        const start = new Date(actualStartDate);
+                        const end = new Date(actualEndDate);
+                        end.setHours(23, 59, 59, 999);
+
+                        return whDate >= start && whDate <= end;
+                    });
+
+                    const totalHours = filteredWorkHours.reduce((sum, wh) => sum + (wh.is_holiday ? 0 : (wh.hours || 0)), 0);
+                    const hourlyRate = typeof emp.hourly_rate === 'number' ? emp.hourly_rate : parseFloat(emp.hourly_rate) || 0;
+                    const totalHolidays = filteredWorkHours.filter(wh => wh.is_holiday === 1).length;
+                    const salary = totalHours * hourlyRate;
+
+                    calculatedSalaries.push({
+                        employeeId: emp.id,
+                        employeeName: emp.name,
+                        totalHours: totalHours,
+                        hourlyRate: hourlyRate,
+                        totalHolidays: totalHolidays,
+                        salary: salary.toFixed(2),
+                    });
+
+                    newDetailedWorkHours[emp.id] = filteredWorkHours.sort((a, b) => new Date(a.date) - new Date(b.date));
+                }
+                setSalaries(calculatedSalaries);
+                setDetailedWorkHours(newDetailedWorkHours);
+                
+                if (calculatedSalaries.length > 0) {
+                    displayMessage('تم حساب الرواتب بنجاح!', 'success');
+                } else {
+                    displayMessage('لم يتم العثور على بيانات لحساب الرواتب للفترة المحددة.', 'info');
+                }
+            } catch (error) {
+                console.error('Error calculating salaries:', error);
+                displayMessage('حدث خطأ أثناء حساب الرواتب. يرجى المحاولة مرة أخرى.', 'error');
+                setSalaries([]);
+                setDetailedWorkHours({});
+            } finally {
+                setLoadingSalaries(false);
+            }
+          }, [employees, selectedEmployeeId, startDate, endDate, displayMessage, isAuthReady, loadingEmployees]);
+
+          useEffect(() => {
+            if (isAuthReady && !loadingEmployees) {
+                calculateSalaries();
+            }
+          }, [selectedEmployeeId, startDate, endDate, employees, calculateSalaries, isAuthReady, loadingEmployees]);
+
+          const overallLoading = loadingEmployees || loadingSalaries;
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-yellow-400 to-orange-600 p-8">
+              <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-3xl mx-auto backdrop-filter backdrop-blur-md bg-opacity-90">
+                <h2 className="text-3xl font-bold text-center text-orange-800 mb-6">رواتب الموظفين</h2>
+
+                {overallLoading ? (
+                    <LoadingSpinner />
+                ) : (
+                    <>
+                        <div className="mb-8 p-6 border border-yellow-300 rounded-lg bg-yellow-50">
+                        <h3 className="text-xl font-semibold text-yellow-700 mb-4">تحديد الموظف والفترة</h3>
+                        <div className="mb-4">
+                            <label htmlFor="selectEmployee" className="block text-gray-700 text-sm font-bold mb-2">اختر موظفًا:</label>
+                            <select
+                            id="selectEmployee"
+                            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                            value={selectedEmployeeId}
+                            onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                            disabled={overallLoading || !isAuthReady || employees.length === 0}
+                            >
+                            <option value="all">جميع الموظفين</option>
+                            {employees.map((employee) => (
+                                <option key={employee.id} value={employee.id}>
+                                {employee.name}
+                                </option>
+                            ))}
+                            </select>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div>
+                            <label htmlFor="salaryStartDate" className="block text-gray-700 text-sm font-bold mb-2">من تاريخ:</label>
+                            <input
+                                type="date"
+                                id="salaryStartDate"
+                                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                disabled={overallLoading || !isAuthReady || employees.length === 0}
+                            />
+                            </div>
+                            <div>
+                            <label htmlFor="salaryEndDate" className="block text-gray-700 text-sm font-bold mb-2">إلى تاريخ:</label>
+                            <input
+                                type="date"
+                                id="salaryEndDate"
+                                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                disabled={overallLoading || !isAuthReady || employees.length === 0}
+                            />
+                            </div>
+                        </div>
+                        </div>
+
+                        <div className="mb-8 p-6 border border-gray-300 rounded-lg bg-gray-50 max-h-96 overflow-y-auto">
+                        <h3 className="text-xl font-semibold text-gray-700 mb-4">نتائج الرواتب</h3>
+                        {salaries.length === 0 && isAuthReady && employees.length > 0 && !loadingSalaries ? (
+                            <p className="text-gray-600 text-center">لا توجد رواتب لعرضها للفترة المحددة. تأكد من إدخال ساعات عمل للموظفين.</p>
+                        ) : salaries.length === 0 && (!isAuthReady || employees.length === 0) && !loadingSalaries ? (
+                            <p className="text-gray-600 text-center">لا توجد بيانات موظفين أو ساعات عمل لحساب الرواتب.</p>
+                        ) : (
+                            salaries.map((s) => (
+                            <div key={s.employeeId} className="mb-6 p-4 border border-orange-200 rounded-lg bg-orange-50 shadow-sm">
+                                <h4 className="text-lg font-bold text-orange-800 mb-2">{s.employeeName}</h4>
+                                <div className="grid grid-cols-2 gap-2 text-gray-700 text-sm mb-3">
+                                <p><strong>إجمالي الساعات:</strong> {s.totalHours}</p>
+                                <p><strong>سعر الساعة:</strong> {s.hourlyRate}</p>
+                                <p><strong>أيام الإجازة:</strong> {s.totalHolidays}</p>
+                                <p><strong>الراتب الإجمالي:</strong> {s.salary}</p>
+                                </div>
+                                {detailedWorkHours[s.employeeId] && detailedWorkHours[s.employeeId].length > 0 && (
+                                  <div className="mt-4">
+                                    <h5 className="text-md font-semibold text-orange-700 mb-2">تفاصيل ساعات العمل:</h5>
+                                    <table className="min-w-full bg-white rounded-lg overflow-hidden shadow-sm text-sm">
+                                      <thead className="bg-orange-100">
+                                        <tr>
+                                          <th className="py-2 px-3 text-right text-gray-600">التاريخ</th>
+                                          <th className="py-2 px-3 text-right text-gray-600">الساعات</th>
+                                          <th className="py-2 px-3 text-right text-gray-600">إجازة</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {detailedWorkHours[s.employeeId].map((detail) => (
+                                          <tr key={detail.id} className="border-b border-gray-100 last:border-b-0">
+                                            <td className="py-2 px-3 text-gray-800">{detail.date}</td>
+                                            <td className="py-2 px-3 text-gray-800">{detail.is_holiday ? 'إجازة' : (detail.hours !== undefined ? detail.hours : 'N/A')}</td>
+                                            <td className="py-2 px-3 text-gray-800">{detail.is_holiday ? 'نعم' : 'لا'}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                            </div>
+                            ))
+                        )}
+                        </div>
+                    </>
+                )}
+
+                <button
+                  onClick={() => setCurrentScreen('managerMenu')}
+                  className="mt-8 bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 mx-auto block"
+                  disabled={overallLoading}
+                >
+                  العودة للقائمة الرئيسية
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Notifications Management Screen
+        // ====================================================================
+        const NotificationsManagementScreen = ({ setCurrentScreen, displayMessage }) => {
+          const [employees, setEmployees] = useState([]);
+          const [notifications, setNotifications] = useState([]);
+          const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
+          const [notificationMessage, setNotificationMessage] = useState('');
+          const [sendTime, setSendTime] = useState('');
+          const [repeatDaily, setRepeatDaily] = useState(false);
+          const [loadingEmployees, setLoadingEmployees] = useState(true);
+          const [loadingNotifications, setLoadingNotifications] = useState(true);
+          const [isAuthReady, setIsAuthReady] = useState(false);
+
+          useEffect(() => {
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
+              setIsAuthReady(true);
+            });
+            return () => unsubscribe();
+          }, []);
+
+          useEffect(() => {
+            if (!isAuthReady) {
+              setEmployees([]);
+              setLoadingEmployees(true);
+              return;
+            }
+
+            setLoadingEmployees(true);
+            const employeesRef = collection(db, `artifacts/${appId}/public/data/employees`);
+            const unsubscribe = onSnapshot(employeesRef, (snapshot) => {
+              const employeesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setEmployees(employeesList);
+              setLoadingEmployees(false);
+            }, (error) => {
+              console.error('Error listening to employees in notifications screen:', error);
+              displayMessage('خطأ في جلب بيانات الموظفين.', 'error');
+              setLoadingEmployees(false);
+            });
+
+            return () => unsubscribe();
+          }, [isAuthReady, displayMessage]);
+
+          useEffect(() => {
+            if (!isAuthReady || loadingEmployees || employees.length === 0) {
+                setNotifications([]);
+                if (loadingEmployees) {
+                    setLoadingNotifications(true);
+                } else {
+                    setLoadingNotifications(false);
+                }
+                return;
+            }
+
+            const notificationsRef = collection(db, `artifacts/${appId}/public/data/notifications`);
+            setLoadingNotifications(true);
+            const unsubscribe = onSnapshot(notificationsRef, (snapshot) => {
+              const notifsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              const employeesMap = new Map(employees.map(emp => [emp.id, emp.name]));
+              const notifsWithNames = notifsList.map(notif => ({
+                ...notif,
+                employeeName: employeesMap.get(notif.employee_id) || 'غير معروف'
+              }));
+              setNotifications(notifsWithNames.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
+              setLoadingNotifications(false);
+            }, (error) => {
+              console.error('Error listening to notifications:', error);
+              displayMessage('خطأ في جلب الإشعارات.', 'error');
+              setLoadingNotifications(false);
+            });
+
+            return () => unsubscribe();
+          }, [isAuthReady, employees, displayMessage, loadingEmployees]);
+
+
+          const handleSendNotification = async () => {
+            if (!selectedEmployeeId || !notificationMessage || !sendTime) {
+              displayMessage('يرجى ملء جميع حقول الإشعار.', 'error');
+              return;
+            }
+            setLoadingNotifications(true);
+            try {
+              const notificationsRef = collection(db, `artifacts/${appId}/public/data/notifications`);
+              await addDoc(notificationsRef, {
+                employee_id: selectedEmployeeId,
+                message: notificationMessage,
+                time: sendTime,
+                repeat_daily: repeatDaily ? 1 : 0,
+                timestamp: new Date().toISOString(),
+              });
+              setNotificationMessage('');
+              setSendTime('');
+              setRepeatDaily(false);
+              setSelectedEmployeeId('');
+              displayMessage('تم إرسال الإشعار بنجاح!', 'success');
+            } catch (error) {
+              console.error('Error sending notification:', error);
+              displayMessage('حدث خطأ أثناء إرسال الإشعار. يرجى المحاولة مرة أخرى.', 'error');
+            } finally {
+              setLoadingNotifications(false);
+            }
+          };
+
+          const handleDeleteNotification = async (id) => {
+            setLoadingNotifications(true);
+            try {
+              await deleteDoc(doc(db, `artifacts/${appId}/public/data/notifications`, id));
+              displayMessage('تم حذف الإشعار بنجاح!', 'success');
+            } catch (error) {
+              console.error('Error deleting notification:', error);
+              displayMessage('حدث خطأ أثناء حذف الإشعار. يرجى المحاولة مرة أخرى.', 'error');
+            } finally {
+              setLoadingNotifications(false);
+            }
+          };
+
+          const overallLoading = loadingEmployees || loadingNotifications;
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-red-400 to-pink-600 p-8">
+              <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-3xl mx-auto backdrop-filter backdrop-blur-md bg-opacity-90">
+                <h2 className="text-3xl font-bold text-center text-red-800 mb-6">إدارة الإشعارات</h2>
+
+                {overallLoading && <LoadingSpinner />}
+
+                <div className="mb-8 p-6 border border-red-300 rounded-lg bg-red-50">
+                  <h3 className="text-xl font-semibold text-red-700 mb-4">إرسال إشعار جديد</h3>
+                  <div className="mb-4">
+                    <label htmlFor="selectEmployeeNotif" className="block text-gray-700 text-sm font-bold mb-2">اختر الموظف:</label>
+                    <select
+                      id="selectEmployeeNotif"
+                      className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                      value={selectedEmployeeId}
+                      onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                      disabled={overallLoading || employees.length === 0}
+                    >
+                      <option value="">اختر موظفًا</option>
+                      {employees.map((employee) => (
+                        <option key={employee.id} value={employee.id}>
+                          {employee.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mb-4">
+                    <label htmlFor="notificationMessage" className="block text-gray-700 text-sm font-bold mb-2">نص الإشعار:</label>
+                    <textarea
+                      id="notificationMessage"
+                      className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                      rows="4"
+                      placeholder="اكتب نص الإشعار هنا..."
+                      value={notificationMessage}
+                      onChange={(e) => setNotificationMessage(e.target.value)}
+                      disabled={overallLoading}
+                    ></textarea>
+                  </div>
+                  <div className="mb-4">
+                    <label htmlFor="sendTime" className="block text-gray-700 text-sm font-bold mb-2">وقت الإرسال:</label>
+                    <input
+                      type="datetime-local"
+                      id="sendTime"
+                      className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                      value={sendTime}
+                      onChange={(e) => setSendTime(e.target.value)}
+                      disabled={overallLoading}
+                    />
+                  </div>
+                  <div className="mb-6 flex items-center">
+                    <input
+                      type="checkbox"
+                      id="repeatDaily"
+                      className="form-checkbox h-5 w-5 text-red-600 rounded"
+                      checked={repeatDaily}
+                      onChange={(e) => setRepeatDaily(e.target.checked)}
+                      disabled={overallLoading}
+                    />
+                    <label htmlFor="repeatDaily" className="ml-2 text-gray-700 text-sm font-bold">تكرار يوميًا</label>
+                  </div>
+                  <button
+                    onClick={handleSendNotification}
+                    className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full w-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105"
+                    disabled={overallLoading}
+                  >
+                    {overallLoading ? 'جارٍ الإرسال...' : 'إرسال الإشعار'}
+                  </button>
+                </div>
+
+                <div className="mb-8 p-6 border border-gray-300 rounded-lg bg-gray-50 max-h-80 overflow-y-auto">
+                  <h3 className="text-xl font-semibold text-gray-700 mb-4">الإشعارات المرسلة</h3>
+                  {overallLoading ? (
+                    <LoadingSpinner />
+                  ) : notifications.length === 0 && isAuthReady && employees.length > 0 ? (
+                    <p className="text-gray-600 text-center">لا توجد إشعارات مرسلة بعد.</p>
+                  ) : notifications.length === 0 && (!isAuthReady || employees.length === 0) ? (
+                    <p className="text-gray-600 text-center">جارٍ تحميل بيانات الموظفين والإشعارات...</p>
+                  ) : (
+                    <table className="min-w-full bg-white rounded-lg overflow-hidden shadow-md">
+                      <thead className="bg-gray-200">
+                        <tr>
+                          <th className="py-2 px-4 text-right text-gray-600">الموظف</th>
+                          <th className="py-2 px-4 text-right text-gray-600">نص الإشعار</th>
+                          <th className="py-2 px-4 text-right text-gray-600">وقت الإرسال</th>
+                          <th className="py-2 px-4 text-right text-gray-600">يتكرر يوميًا؟</th>
+                          <th className="py-2 px-4 text-right text-gray-600">إجراء</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {notifications.map((notif) => (
+                          <tr key={notif.id} className="border-b border-gray-100 last:border-b-0">
+                            <td className="py-2 px-4 text-gray-800">{notif.employeeName}</td>
+                            <td className="py-2 px-4 text-gray-800">{notif.message}</td>
+                            <td className="py-2 px-4 text-gray-800">{notif.time}</td>
+                            <td className="py-2 px-4 text-gray-800">{notif.repeat_daily ? 'نعم' : 'لا'}</td>
+                            <td className="py-2 px-4 text-gray-800">
+                              <button
+                                onClick={() => handleDeleteNotification(notif.id)}
+                                className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-full text-sm transition duration-300 ease-in-out"
+                                disabled={overallLoading}
+                              >
+                                حذف
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setCurrentScreen('managerMenu')}
+                  className="mt-8 bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 mx-auto block"
+                  disabled={overallLoading}
+                >
+                  العودة للقائمة الرئيسية
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        // ====================================================================
+        // Main Application Component (App)
+        // ====================================================================
+        const App = () => {
+          const [currentScreen, setCurrentScreen] = useState('login'); // 'login', 'managerMenu', 'employee', 'employeeManagement', 'amountsManagement', 'salariesManagement', 'notificationsManagement'
+          const [loggedInUser, setLoggedInUser] = useState(null); // { role: 'manager' | 'employee', data: { id, name, ... } }
+          const [message, setMessage] = useState('');
+          const [messageType, setMessageType] = useState('success');
+          const [showMessage, setShowMessage] = useState(false);
+
+          // Function to display alert messages - wrapped in useCallback
+          const displayMessage = useCallback((msg, type = 'success') => {
+            setMessage(msg);
+            setMessageType(type);
+            setShowMessage(true);
+            setTimeout(() => {
+              setShowMessage(false);
+              setMessage(''); // Clear message after hiding
+            }, 3000); // Hide after 3 seconds
+          }, []); // No dependencies to ensure function stability
+
+          // Handle successful login
+          const handleLoginSuccess = (role, userData) => {
+            setLoggedInUser({ role, data: userData });
+            if (role === 'manager') {
+              setCurrentScreen('managerMenu');
+            } else {
+              setCurrentScreen('employee');
+            }
+          };
+
+          // Handle logout
+          const handleLogout = async () => {
+            try {
+              await signOut(auth);
+              setLoggedInUser(null);
+              setCurrentScreen('login');
+              displayMessage('تم تسجيل الخروج بنجاح!', 'success');
+            } catch (error) {
+              console.error('Error logging out:', error);
+              displayMessage('حدث خطأ أثناء تسجيل الخروج. يرجى المحاولة مرة أخرى.', 'error');
+            }
+          };
+
+          // Initialize Firebase and initial login
+          useEffect(() => {
+            const unsubscribe = onAuthStateChanged(auth, async (user) => {
+              if (!user) {
+                try {
+                  if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                  } else {
+                    await signInAnonymously(auth);
+                  }
+                } catch (error) {
+                  console.error('Error in initial/anonymous login:', error);
+                  displayMessage('خطأ في تهيئة المستخدم.', 'error');
+                }
+              }
+            });
+
+            return () => unsubscribe();
+          }, [displayMessage]);
+
+          // Render screen based on state
+          const renderScreen = () => {
+            switch (currentScreen) {
+              case 'login':
+                return <LoginScreen onLogin={handleLoginSuccess} displayMessage={displayMessage} />;
+              case 'managerMenu':
+                return <ManagerMenuScreen onLogout={handleLogout} setCurrentScreen={setCurrentScreen} displayMessage={displayMessage} loggedInUser={loggedInUser} />;
+              case 'employee':
+                return <EmployeeScreen onLogout={handleLogout} displayMessage={displayMessage} loggedInUser={loggedInUser} />;
+              case 'employeeManagement':
+                return <EmployeeManagementScreen setCurrentScreen={setCurrentScreen} displayMessage={displayMessage} />;
+              case 'amountsManagement':
+                return <AmountsManagementScreen setCurrentScreen={setCurrentScreen} displayMessage={displayMessage} />;
+              case 'salariesManagement':
+                return <SalariesManagementScreen setCurrentScreen={setCurrentScreen} displayMessage={displayMessage} />;
+              case 'notificationsManagement':
+                return <NotificationsManagementScreen setCurrentScreen={setCurrentScreen} displayMessage={displayMessage} />;
+              default:
+                return <LoginScreen onLogin={handleLoginSuccess} displayMessage={displayMessage} />;
+            }
+          };
+
+          return (
+            <div className="font-inter">
+              {renderScreen()}
+              {showMessage && <MessageOverlay message={message} type={messageType} onClose={() => setShowMessage(false)} />}
+            </div>
+          );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
